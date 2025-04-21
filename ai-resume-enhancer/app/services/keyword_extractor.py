@@ -10,8 +10,6 @@ import re
 import logging
 from typing import List, Dict, Tuple, Set
 from collections import Counter
-from nltk.tokenize import word_tokenize
-from nltk.corpus import stopwords
 
 # Import AI models
 from app.services.ai_models import (
@@ -26,6 +24,39 @@ from app.models.schemas import TECHNICAL_SKILLS, SOFT_SKILLS
 # Set up logger
 logger = logging.getLogger("ai-resume-enhancer")
 
+# Define basic stopwords for fallback
+BASIC_STOPWORDS = set([
+    'the', 'and', 'a', 'to', 'of', 'in', 'is', 'it', 'that', 'was', 'for', 
+    'on', 'with', 'as', 'by', 'at', 'from', 'be', 'this', 'have', 'or', 
+    'an', 'are', 'not', 'but', 'had', 'has', 'they', 'what', 'which', 
+    'when', 'who', 'will', 'more', 'no', 'if', 'out', 'so', 'up', 'my'
+])
+
+# Helper function for safe tokenization
+def safe_tokenize(text):
+    """Tokenize text with fallback mechanism"""
+    try:
+        from nltk.tokenize import word_tokenize
+        return word_tokenize(text.lower())
+    except Exception as tokenize_error:
+        logger.warning(f"NLTK tokenization failed: {str(tokenize_error)}. Using fallback.")
+        # Simple tokenization: lowercase, split on spaces and punctuation
+        text = text.lower()
+        # Replace punctuation with spaces
+        for char in '.,;:!?()[]{}"\'':
+            text = text.replace(char, ' ')
+        return text.split()
+
+# Helper function for getting stopwords
+def get_stopwords():
+    """Get stopwords with fallback mechanism"""
+    try:
+        from nltk.corpus import stopwords
+        return set(stopwords.words('english'))
+    except Exception as stopwords_error:
+        logger.warning(f"NLTK stopwords failed: {str(stopwords_error)}. Using fallback.")
+        return BASIC_STOPWORDS
+
 def extract_keywords_tfidf(text: str, top_n: int = 20) -> List[str]:
     """
     Extract keywords from text using TF-IDF vectorization
@@ -39,8 +70,9 @@ def extract_keywords_tfidf(text: str, top_n: int = 20) -> List[str]:
     """
     try:
         # Tokenize and clean text
-        tokens = word_tokenize(text.lower())
-        tokens = [t for t in tokens if t.isalpha() and t not in stopwords.words('english') and len(t) > 2]
+        tokens = safe_tokenize(text)
+        stop_words = get_stopwords()
+        tokens = [t for t in tokens if t.isalpha() and t not in stop_words and len(t) > 2]
         processed_text = " ".join(tokens)
         
         # Get TF-IDF vectorizer
@@ -77,11 +109,13 @@ def extract_keywords_frequency(text: str, top_n: int = 20) -> List[str]:
         List of most frequent words
     """
     try:
-        tokens = word_tokenize(text.lower())
+        tokens = safe_tokenize(text)
+        stop_words = get_stopwords()
+            
         filtered_tokens = [
             t for t in tokens 
             if t.isalpha() and 
-            t not in stopwords.words('english') and 
+            t not in stop_words and 
             len(t) > 2
         ]
         freq_dist = Counter(filtered_tokens)
@@ -101,40 +135,43 @@ def extract_skills(text: str) -> Tuple[List[str], List[str]]:
         Tuple of (technical_skills, soft_skills)
     """
     text = text.lower()
-    words = word_tokenize(text)
-    
-    # Create bigrams and trigrams for multi-word skill detection
-    bigrams = [' '.join(words[i:i+2]) for i in range(len(words)-1)]
-    trigrams = [' '.join(words[i:i+3]) for i in range(len(words)-2)]
-    
-    technical_skills = []
-    soft_skills = []
-    
-    # Check for unigrams, bigrams, and trigrams in skills lists
-    all_terms = words + bigrams + trigrams
-    
-    for term in all_terms:
-        if term in TECHNICAL_SKILLS:
-            technical_skills.append(term)
-        elif term in SOFT_SKILLS:
-            soft_skills.append(term)
-    
-    # Check for partial matches for technical skills
-    # This helps catch variations like "Python programming" when "python" is in the skills list
-    for skill in TECHNICAL_SKILLS:
-        if skill not in technical_skills and skill in text:
-            technical_skills.append(skill)
-    
-    # Check for partial matches for soft skills
-    for skill in SOFT_SKILLS:
-        if skill not in soft_skills and skill in text:
-            soft_skills.append(skill)
-    
-    # Remove duplicates while preserving order
-    technical_skills = list(dict.fromkeys(technical_skills))
-    soft_skills = list(dict.fromkeys(soft_skills))
-    
-    return technical_skills, soft_skills
+    try:
+        words = safe_tokenize(text)
+        
+        # Create bigrams and trigrams for multi-word skill detection
+        bigrams = [' '.join(words[i:i+2]) for i in range(len(words)-1)]
+        trigrams = [' '.join(words[i:i+3]) for i in range(len(words)-2)]
+        
+        technical_skills = []
+        soft_skills = []
+        
+        # Check for unigrams, bigrams, and trigrams in skills lists
+        all_terms = words + bigrams + trigrams
+        
+        for term in all_terms:
+            if term in TECHNICAL_SKILLS:
+                technical_skills.append(term)
+            elif term in SOFT_SKILLS:
+                soft_skills.append(term)
+        
+        # Check for partial matches for technical skills
+        for skill in TECHNICAL_SKILLS:
+            if skill not in technical_skills and skill in text:
+                technical_skills.append(skill)
+        
+        # Check for partial matches for soft skills
+        for skill in SOFT_SKILLS:
+            if skill not in soft_skills and skill in text:
+                soft_skills.append(skill)
+        
+        # Remove duplicates while preserving order
+        technical_skills = list(dict.fromkeys(technical_skills))
+        soft_skills = list(dict.fromkeys(soft_skills))
+        
+        return technical_skills, soft_skills
+    except Exception as e:
+        logger.error(f"Skill extraction failed: {str(e)}")
+        return [], []
 
 def extract_important_phrases(text: str, min_length: int = 5, max_length: int = 20) -> List[str]:
     """
@@ -148,35 +185,39 @@ def extract_important_phrases(text: str, min_length: int = 5, max_length: int = 
     Returns:
         List of important phrases
     """
-    # Look for phrases that might be section headers or important bullet points
-    patterns = [
-        # Section headers (capitalized text followed by colon or newline)
-        r'(?:^|\n)([A-Z][A-Za-z\s]{' + str(min_length) + ',' + str(max_length) + '})(?::|\n)',
+    try:
+        # Look for phrases that might be section headers or important bullet points
+        patterns = [
+            # Section headers (capitalized text followed by colon or newline)
+            r'(?:^|\n)([A-Z][A-Za-z\s]{' + str(min_length) + ',' + str(max_length) + '})(?::|\n)',
+            
+            # Bullet points (starting with •, *, -, or number)
+            r'(?:^|\n)(?:•|\*|\-|\d+\.)\s+([A-Za-z][A-Za-z\s,]{' + str(min_length) + ',' + str(max_length) + '})',
+            
+            # All caps phrases (like "PROFESSIONAL EXPERIENCE")
+            r'\b([A-Z][A-Z\s]{' + str(min_length) + ',' + str(max_length) + '})\b',
+            
+            # Action phrases (starting with verb)
+            r'(?:^|\n)(?:•|\*|\-|\d+\.)\s+([A-Za-z]ed|[A-Za-z]ing)[A-Za-z\s,]{' + str(min_length-3) + ',' + str(max_length-3) + '}'
+        ]
         
-        # Bullet points (starting with •, *, -, or number)
-        r'(?:^|\n)(?:•|\*|\-|\d+\.)\s+([A-Za-z][A-Za-z\s,]{' + str(min_length) + ',' + str(max_length) + '})',
+        phrases = []
+        for pattern in patterns:
+            matches = re.findall(pattern, text)
+            phrases.extend([match.strip() for match in matches if match.strip()])
         
-        # All caps phrases (like "PROFESSIONAL EXPERIENCE")
-        r'\b([A-Z][A-Z\s]{' + str(min_length) + ',' + str(max_length) + '})\b',
+        # Remove duplicates while preserving order
+        unique_phrases = []
+        seen = set()
+        for phrase in phrases:
+            if phrase.lower() not in seen:
+                seen.add(phrase.lower())
+                unique_phrases.append(phrase)
         
-        # Action phrases (starting with verb)
-        r'(?:^|\n)(?:•|\*|\-|\d+\.)\s+([A-Za-z]ed|[A-Za-z]ing)[A-Za-z\s,]{' + str(min_length-3) + ',' + str(max_length-3) + '}'
-    ]
-    
-    phrases = []
-    for pattern in patterns:
-        matches = re.findall(pattern, text)
-        phrases.extend([match.strip() for match in matches if match.strip()])
-    
-    # Remove duplicates while preserving order
-    unique_phrases = []
-    seen = set()
-    for phrase in phrases:
-        if phrase.lower() not in seen:
-            seen.add(phrase.lower())
-            unique_phrases.append(phrase)
-    
-    return unique_phrases[:15]  # Limit to top 15 phrases
+        return unique_phrases[:15]  # Limit to top 15 phrases
+    except Exception as e:
+        logger.error(f"Phrase extraction failed: {str(e)}")
+        return []
 
 def calculate_keyword_frequency(text: str, keywords: List[str]) -> Dict[str, int]:
     """
@@ -189,25 +230,29 @@ def calculate_keyword_frequency(text: str, keywords: List[str]) -> Dict[str, int
     Returns:
         Dictionary mapping keywords to their frequencies
     """
-    words = word_tokenize(text.lower())
-    filtered_words = [w for w in words if w.isalpha() and len(w) > 2]
-    
-    # Count occurrences of keywords
-    keyword_freq = {}
-    for keyword in keywords:
-        keyword_lower = keyword.lower()
-        count = 0
+    try:
+        words = safe_tokenize(text)
+        filtered_words = [w for w in words if w.isalpha() and len(w) > 2]
         
-        # For multi-word keywords, check if the whole phrase appears
-        if ' ' in keyword:
-            count = text.lower().count(keyword_lower)
-        else:
-            count = filtered_words.count(keyword_lower)
+        # Count occurrences of keywords
+        keyword_freq = {}
+        for keyword in keywords:
+            keyword_lower = keyword.lower()
+            count = 0
+            
+            # For multi-word keywords, check if the whole phrase appears
+            if ' ' in keyword:
+                count = text.lower().count(keyword_lower)
+            else:
+                count = filtered_words.count(keyword_lower)
+            
+            if count > 0:
+                keyword_freq[keyword] = count
         
-        if count > 0:
-            keyword_freq[keyword] = count
-    
-    return keyword_freq
+        return keyword_freq
+    except Exception as e:
+        logger.error(f"Keyword frequency calculation failed: {str(e)}")
+        return {}
 
 def analyze_keywords(text: str) -> Dict[str, any]:
     """
@@ -221,7 +266,11 @@ def analyze_keywords(text: str) -> Dict[str, any]:
     """
     try:
         # Extract keywords using NER (high confidence only)
-        ner_keywords = extract_keywords_with_ner(text, confidence_threshold=0.85)
+        ner_keywords = []
+        try:
+            ner_keywords = extract_keywords_with_ner(text, confidence_threshold=0.5)
+        except Exception as ner_error:
+            logger.warning(f"NER keyword extraction failed: {str(ner_error)}")
         
         # Extract keywords using TF-IDF
         tfidf_keywords = extract_keywords_tfidf(text, top_n=15)

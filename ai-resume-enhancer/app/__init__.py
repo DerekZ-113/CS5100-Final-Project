@@ -6,6 +6,7 @@ including middleware, exception handlers, and API routes.
 """
 
 import logging
+import nltk  # Add this import
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -77,6 +78,16 @@ def create_app() -> FastAPI:
         """Initialize services on application startup"""
         try:
             logger.info("Starting AI Resume Enhancer API")
+            
+            # Download required NLTK resources
+            try:
+                logger.info("Downloading required NLTK resources...")
+                nltk.download('punkt', quiet=False)
+                nltk.download('stopwords', quiet=False)
+                logger.info("NLTK resources downloaded successfully")
+            except Exception as e:
+                logger.error(f"Failed to download NLTK resources: {str(e)}")
+                # Continue execution as some functionality might still work
             
             # Initialize services (AI models, etc.)
             initialize_services()

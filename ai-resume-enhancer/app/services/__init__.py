@@ -6,6 +6,8 @@ for resume analysis, keyword extraction, text processing, and job matching.
 """
 
 import logging
+import os
+import nltk  # Add this import
 
 # Set up logger
 logger = logging.getLogger("ai-resume-enhancer")
@@ -42,6 +44,40 @@ from .text_processor import (
     suggest_resume_improvements
 )
 
+def download_nltk_resources():
+    """Download all required NLTK resources"""
+    try:
+        # Make sure NLTK data directory exists and is writable
+        nltk_data_dir = os.path.expanduser('~/nltk_data')
+        os.makedirs(nltk_data_dir, exist_ok=True)
+        
+        # Download specific resources
+        logger.info("Downloading NLTK resources...")
+        nltk.download('punkt', download_dir=nltk_data_dir)
+        nltk.download('stopwords', download_dir=nltk_data_dir)
+        
+        # Force download of punkt tokenizer data
+        # This should ensure the punkt_tab file is available
+        try:
+            from nltk.tokenize import word_tokenize
+            # Force loading to validate installation
+            word_tokenize("Test sentence.")
+            logger.info("NLTK word_tokenize tested successfully")
+        except Exception as e:
+            logger.error(f"Error testing word_tokenize: {str(e)}")
+            # Try a direct import approach
+            try:
+                from nltk.data import load
+                load('tokenizers/punkt/english.pickle')
+                logger.info("NLTK punkt loaded directly")
+            except Exception as e2:
+                logger.error(f"Error loading punkt directly: {str(e2)}")
+                
+        logger.info("NLTK resources downloaded successfully")
+    except Exception as e:
+        logger.error(f"Failed to download NLTK resources: {str(e)}")
+        raise
+
 # Function to initialize all services
 def initialize_services():
     """
@@ -54,7 +90,10 @@ def initialize_services():
     try:
         logger.info("Initializing AI Resume Enhancer services...")
         
-        # Initialize AI models first
+        # Download NLTK resources first
+        download_nltk_resources()
+        
+        # Initialize AI models next
         setup_ai_services()
         
         logger.info("All services initialized successfully")
@@ -91,5 +130,6 @@ __all__ = [
     'suggest_resume_improvements',
     
     # Service Initialization
-    'initialize_services'
+    'initialize_services',
+    'download_nltk_resources'
 ]
